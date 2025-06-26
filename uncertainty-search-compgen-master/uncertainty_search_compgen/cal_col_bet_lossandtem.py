@@ -1,0 +1,2 @@
+import pandas as pd
+df = pd.read_json('/home/wangx36/uncertainty-search-compgen-master/uncertainty-search-compgen-master/token_losses_readable_sorted_with_temperature_with_original_logits.json'); print(df['loss'].corr(df['temperature']))

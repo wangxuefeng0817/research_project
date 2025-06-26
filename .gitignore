@@ -1,0 +1,19 @@
+# Ignore large data files
+*.json
+*.pkl
+*.pt
+*.png
+*.txt
+
+# Ignore log directories
+logs/
+logs_full_data_stable/
+
+# Ignore dataset directory
+text/
+
+# Python cache
+__pycache__/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/ 
