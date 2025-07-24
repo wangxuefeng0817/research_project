@@ -38,7 +38,7 @@ def get_topk_outputs(harness, batch, k=5):
             temp_info = f"ATS温度(均值={temperatures.mean().item():.3f})"
         else:  # 是标量1，说明没使用ATS
             temp_info = f"固定温度({temperatures})"
-        print(f"   🌡️  get_topk_outputs: {temp_info}")
+        # print(f"   🌡️  get_topk_outputs: {temp_info}")
         
         # 使用温度缩放后的logits
         return scaled_logits.topk(k, dim=-1).indices.cpu()
@@ -71,8 +71,8 @@ def generate_gpt(harness, tokenizer, inp, max_steps=128):
         dtype=torch.long,
         device="cuda",
     )
-    print(tokenizer.batch_decode(input_tokens))
-    print(output)
+    # print(tokenizer.batch_decode(input_tokens))
+    # print(output)
 
     with torch.inference_mode():
         for i in range(max_steps):
@@ -82,11 +82,10 @@ def generate_gpt(harness, tokenizer, inp, max_steps=128):
                 attention_mask=torch.ones_like(input_tokens),
                 decoder_attention_mask=torch.ones_like(output),
             )
-            import pdb
-
-            pdb.set_trace()
+            # import pdb
+            # pdb.set_trace()
             tformer_out = out_logits.logits[:, -1:].argmax(dim=-1)
-            print(tformer_out)
+            # print(tformer_out)
             output = torch.cat([output, tformer_out], dim=-1)
 
     return tokenizer.decode(output.cpu().numpy()[0].tolist())
@@ -126,9 +125,9 @@ def generate_gpt_manual(harness, tokenizer, inp, topk=10):
             ]
 
             # Print out the next tokens
-            print("".join(generated_tokens), end="\n\n")
-            for idx, (tok, val) in enumerate(zip(out_tokens, tformer_out_values)):
-                print(f"{idx + 1:<3}{tok:<15}{val:<6.2f}{int(val) * '█'}")
+            # print("".join(generated_tokens), end="\n\n")
+            # for idx, (tok, val) in enumerate(zip(out_tokens, tformer_out_values)):
+            #     print(f"{idx + 1:<3}{tok:<15}{val:<6.2f}{int(val) * '█'}")
 
             # Choose the next token
             next_token_idx = input("Next token")
@@ -138,7 +137,7 @@ def generate_gpt_manual(harness, tokenizer, inp, topk=10):
             # Store the token
             generated_tokens.append(tokenizer.decode(tformer_out[0]))
             output = torch.cat([output, tformer_out], dim=-1)
-            clear_output(wait=True)
+            # clear_output(wait=True)
 
 
 @torch.inference_mode()
@@ -367,8 +366,46 @@ def beam_search_hf(
         batch_size = inp_batch.shape[0]
         actual_seq_len = out_reshaped.shape[1]
         
+        # 🔍 Debug: 检查HuggingFace输出的实际格式
+        print(f"\n🔍 HuggingFace beam_search_hf debug:")
+        print(f"inp_batch.shape: {inp_batch.shape}")
+        print(f"Raw sequences.shape: {sequences.shape}")
+        print(f"out_reshaped.shape (after removing start token): {out_reshaped.shape}")
+        print(f"batch_size: {batch_size}, k: {k}, actual_seq_len: {actual_seq_len}")
+        print(f"Expected shape after view: {(batch_size, k, actual_seq_len)}")
+        
+        # 检查前几个序列是否真的不同
+        if out_reshaped.shape[0] >= 5:
+            print(f"First 5 sequences (first 10 tokens):")
+            for i in range(min(5, out_reshaped.shape[0])):
+                print(f"  Seq {i}: {out_reshaped[i, :10]}")
+        
         # Reshape: from (batch_size * k, seq_len) to (batch_size, seq_len, k)
         out_reshaped = out_reshaped.view(batch_size, k, actual_seq_len).permute(0, 2, 1)
+        
+        print(f"Final output shape: {out_reshaped.shape}")
+        print(f"First batch, first 10 tokens, all 5 candidates:")
+        print(f"  Candidate 0: {out_reshaped[0, :10, 0]}")
+        print(f"  Candidate 1: {out_reshaped[0, :10, 1]}")
+        print(f"  Candidate 2: {out_reshaped[0, :10, 2]}")
+        print(f"  Candidate 3: {out_reshaped[0, :10, 3]}")
+        print(f"  Candidate 4: {out_reshaped[0, :10, 4]}")
+        
+        # 检查在什么位置开始出现差异
+        print(f"\n🔍 检查候选序列差异位置:")
+        first_seq = out_reshaped[0, :, 0]  # 第一个候选序列
+        for i in range(1, 5):
+            candidate_seq = out_reshaped[0, :, i]
+            diff_mask = (first_seq != candidate_seq)
+            if diff_mask.any():
+                first_diff_pos = diff_mask.nonzero()[0].item()
+                print(f"  Candidate {i} vs Candidate 0: 首次差异在位置 {first_diff_pos}")
+                print(f"    位置 {first_diff_pos}: {first_seq[first_diff_pos].item()} vs {candidate_seq[first_diff_pos].item()}")
+                # 显示更多差异位置
+                diff_positions = diff_mask.nonzero().flatten()[:5]  # 前5个差异
+                print(f"    前5个差异位置: {diff_positions.tolist()}")
+            else:
+                print(f"  Candidate {i} vs Candidate 0: 完全相同")
 
         return out_reshaped
 
@@ -403,9 +440,10 @@ def simple_temperature_test(
             
             if hasattr(temperatures, 'mean'):
                 temp_mean = temperatures.mean().item()
-                print(f"   🌡️  ATS头平均温度: {temp_mean:.3f}")
+                # print(f"   🌡️  ATS头平均温度: {temp_mean:.3f}")
             else:
-                print(f"   📏 固定温度: {temperatures}")
+                # print(f"   📏 固定温度: {temperatures}")
+                pass
         
         # 使用标准HuggingFace生成（不强制应用温度）
         output = harness.model.generate(
@@ -491,8 +529,8 @@ def temperature_weighted_beam_search(
                     else:
                         current_temp = temperatures  # 固定温度
                         
-                    if step == 0 and batch_idx == 0:  # 只打印一次
-                        print(f"   🌡️  温度加权beam search: α={alpha}, 当前温度={current_temp:.3f}")
+                    # if step == 0 and batch_idx == 0:  # 只打印一次
+                    #     print(f"   🌡️  温度加权beam search: α={alpha}, 当前温度={current_temp:.3f}")
                         
                 else:
                     # 标准T5（无温度缩放）
@@ -505,8 +543,8 @@ def temperature_weighted_beam_search(
                     next_token_logits = output.logits[0, -1, :]
                     current_temp = 1.0  # 无温度
                     
-                    if step == 0 and batch_idx == 0:
-                        print(f"   📏 标准beam search: α={alpha}, 固定温度=1.0")
+                    # if step == 0 and batch_idx == 0:
+                    #     print(f"   📏 标准beam search: α={alpha}, 固定温度=1.0")
                 
                 # 计算概率和分数
                 next_token_probs = torch.softmax(next_token_logits, dim=-1)
@@ -595,11 +633,21 @@ def temperature_rerank_beam_search(
         # 🔥 步骤1: 用HuggingFace生成更多候选（比如2倍）
         num_candidates = max(beams * 2, 10)  # 生成更多候选用于重排
         
+        # Debug: 检查参数冲突
+        # print(f"Debug: beams={beams}, num_candidates={num_candidates}")
+        # print(f"Debug: Before fix - num_beams={beams}, num_return_sequences={num_candidates}")
+        
+        # 修复参数冲突：确保 num_return_sequences <= num_beams
+        actual_num_beams = max(beams, num_candidates)
+        actual_num_return_sequences = min(num_candidates, actual_num_beams)
+        
+        # print(f"Debug: After fix - num_beams={actual_num_beams}, num_return_sequences={actual_num_return_sequences}")
+        
         output = harness.model.generate(
             input_ids=inp_batch,
             max_length=max_length,
-            num_beams=beams,
-            num_return_sequences=num_candidates,
+            num_beams=actual_num_beams,
+            num_return_sequences=actual_num_return_sequences,
             do_sample=False,
             early_stopping=True,
             return_dict_in_generate=True,
@@ -644,18 +692,18 @@ def temperature_rerank_beam_search(
                         else:
                             avg_temp = temperatures
                             
-                        if batch_idx == 0 and cand_idx == 0:  # 只打印一次
-                            print(f"   🌡️  温度重排序: α={alpha}, 样本平均温度={avg_temp:.3f}")
+                        # if batch_idx == 0 and cand_idx == 0:  # 只打印一次
+                        #     print(f"   🌡️  温度重排序: α={alpha}, 样本平均温度={avg_temp:.3f}")
                             
                     except Exception as e:
                         # 如果出错，使用默认温度
                         avg_temp = 1.0
-                        if batch_idx == 0 and cand_idx == 0:
-                            print(f"   ⚠️  温度计算出错，使用默认值: {e}")
+                        # if batch_idx == 0 and cand_idx == 0:
+                        #     print(f"   ⚠️  温度计算出错，使用默认值: {e}")
                 else:
                     avg_temp = 1.0  # 标准T5
-                    if batch_idx == 0 and cand_idx == 0:
-                        print(f"   📏 标准模型重排序: α={alpha}")
+                    # if batch_idx == 0 and cand_idx == 0:
+                    #     print(f"   📏 标准模型重排序: α={alpha}")
                 
                 # 🔥 步骤3: 计算HuggingFace的原始log-probability
                 # 简化：使用序列长度作为粗略的log-prob代理

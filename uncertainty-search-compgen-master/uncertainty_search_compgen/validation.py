@@ -29,6 +29,12 @@ from uncertainty_search_compgen.inference_ats import (
     uncertainty_guided_search,
     temperature_rerank_beam_search,
 )
+from uncertainty_search_compgen.inference_ats_simple import (
+    ats_uncertainty_guided_search_wrapper,
+)
+from uncertainty_search_compgen.inference_origianl import (
+    uncertainty_guided_search as original_uncertainty_guided_search,
+)
 
 @torch.no_grad()
 def compute_accuracy_by_batch_by_k(preds, targets, pad_target_idx):
@@ -47,6 +53,20 @@ def compute_accuracy_by_batch_by_k(preds, targets, pad_target_idx):
     # Get dimensions
     batch_size, pred_len, k = preds.shape
     target_len = targets.shape[1]
+    
+    # 🔍 Debug: 检查输入数据格式
+    # print(f"\n🔍 Input data debug:")
+    # print(f"preds.shape: {preds.shape}")
+    # print(f"targets.shape: {targets.shape}")
+    # print(f"First prediction sample shape: {preds[0].shape}")
+    # print(f"First target sample shape: {targets[0].shape}")
+    # print(f"First prediction candidates (first 10 tokens):")
+    # print(f"  Candidate 0: {preds[0, :10, 0]}")
+    # print(f"  Candidate 1: {preds[0, :10, 1]}")
+    # print(f"  Candidate 2: {preds[0, :10, 2]}")
+    # print(f"  Candidate 3: {preds[0, :10, 3]}")
+    # print(f"  Candidate 4: {preds[0, :10, 4]}")
+    # print(f"First target (first 10 tokens): {targets[0, :10]}")
     
     # Truncate to minimum length to avoid shape mismatch
     min_len = min(pred_len, target_len)
@@ -77,13 +97,69 @@ def compute_accuracy_by_batch_by_k(preds, targets, pad_target_idx):
     # 2. calculate the accuracy and exacts for each pair. 
     # truncated_matches: (batch, seq_len, k)
 
-    acc = [x.sum(dim=0).div(x.shape[0]).max().item() for x in truncated_matches]
-    exacts = [tm.all(dim=0).max().item() for tm in truncated_matches]
-
-    return {
-        "acc": acc,
-        "exacts": exacts,
+    # Calculate top-1, top-3, top-5 accuracy and exact matches
+    results = {
+        "acc": [],
+        "exacts": [],
+        "top3_acc": [],
+        "top3_exacts": [],
+        "top5_acc": [],
+        "top5_exacts": [],
     }
+    
+    for tm in truncated_matches:
+        # tm shape: (seq_len, k)
+        k = tm.shape[1]
+        
+        # 🔍 Debug: 检查候选的实际情况
+        if len(results["acc"]) == 0:  # 只在第一个样本时打印debug信息
+            print(f"\n🔍 Debug info for first sample:")
+            # print(f"tm.shape: {tm.shape}")
+            # print(f"tm content:\n{tm}")
+        
+        # Token-level accuracy per candidate
+        token_acc_per_candidate = tm.sum(dim=0).div(tm.shape[0])  # (k,)
+        # Exact match per candidate  
+        exact_per_candidate = tm.all(dim=0)  # (k,)
+        
+        # if len(results["acc"]) == 0:  # 只在第一个样本时打印debug信息
+        #     print(f"token_acc_per_candidate: {token_acc_per_candidate}")
+        #     print(f"exact_per_candidate: {exact_per_candidate}")
+        
+        # 🔥 修复：正确的Top-K计算
+        # Top-1: 只看第1个候选
+        results["acc"].append(token_acc_per_candidate[0].item() if k >= 1 else 0.0)
+        results["exacts"].append(exact_per_candidate[0].item() if k >= 1 else 0.0)
+        
+        # Top-3: 前3个候选中任何一个正确就算正确
+        if k >= 3:
+            # 对于token accuracy: 如果前3个中任何一个token匹配，就算该位置正确
+            top3_token_match = tm[:, :3].any(dim=1)  # (seq_len,) - 每个位置是否有匹配
+            top3_acc = top3_token_match.float().mean().item()
+            results["top3_acc"].append(top3_acc)
+            
+            # 对于exact match: 前3个候选中任何一个完全正确就算正确
+            results["top3_exacts"].append(exact_per_candidate[:3].any().item())
+        else:
+            # 如果不足3个候选，用所有可用候选
+            top_k_token_match = tm.any(dim=1)
+            results["top3_acc"].append(top_k_token_match.float().mean().item())
+            results["top3_exacts"].append(exact_per_candidate.any().item())
+        
+        # Top-5: 前5个候选中任何一个正确就算正确
+        if k >= 5:
+            top5_token_match = tm[:, :5].any(dim=1)  # (seq_len,)
+            top5_acc = top5_token_match.float().mean().item()
+            results["top5_acc"].append(top5_acc)
+            
+            results["top5_exacts"].append(exact_per_candidate[:5].any().item())
+        else:
+            # 如果不足5个候选，用所有可用候选
+            top_k_token_match = tm.any(dim=1)
+            results["top5_acc"].append(top_k_token_match.float().mean().item())
+            results["top5_exacts"].append(exact_per_candidate.any().item())
+
+    return results
 
 
 @torch.inference_mode()
@@ -100,6 +176,10 @@ def compute_validation_metrics(
     pad_target_idx = harness.hparams.pad_token
     val_accs = []
     val_exacts = []
+    val_top3_accs = []
+    val_top3_exacts = []
+    val_top5_accs = []
+    val_top5_exacts = []
     outs = []
     
     for batch in tqdm(val_pairs, desc="Evaluating", leave=False):
@@ -118,12 +198,28 @@ def compute_validation_metrics(
 
         val_accs.extend(stats['acc'])
         val_exacts.extend(stats['exacts'])
+        val_top3_accs.extend(stats['top3_acc'])
+        val_top3_exacts.extend(stats['top3_exacts'])
+        val_top5_accs.extend(stats['top5_acc'])
+        val_top5_exacts.extend(stats['top5_exacts'])
 
     if verbose:
-        print(f"Accuracy    : {np.mean(val_accs):.4f}")
-        print(f"Exact Match : {np.mean(val_exacts):.4f}")
+        print(f"Top-1 Accuracy    : {np.mean(val_accs):.4f}")
+        print(f"Top-1 Exact Match : {np.mean(val_exacts):.4f}")
+        print(f"Top-3 Accuracy    : {np.mean(val_top3_accs):.4f}")
+        print(f"Top-3 Exact Match : {np.mean(val_top3_exacts):.4f}")
+        print(f"Top-5 Accuracy    : {np.mean(val_top5_accs):.4f}")
+        print(f"Top-5 Exact Match : {np.mean(val_top5_exacts):.4f}")
 
-    return {"accuracy": val_accs, "exacts": val_exacts, "results": outs}
+    return {
+        "accuracy": val_accs, 
+        "exacts": val_exacts, 
+        "top3_accuracy": val_top3_accs,
+        "top3_exacts": val_top3_exacts,
+        "top5_accuracy": val_top5_accs,
+        "top5_exacts": val_top5_exacts,
+        "results": outs
+    }
 
 
 def uncertainty_guided_search_wrapper(
@@ -180,6 +276,59 @@ def uncertainty_guided_search_wrapper(
     return out_logits
 
 
+def original_uncertainty_guided_search_wrapper(
+    harness, batch, tokenizer, k=32, keep_n=3, out_length=64, **kwargs
+):
+    """
+    包装inference_origianl.py中的uncertainty_guided_search，转换输出格式为标准格式
+    Return shape: (BATCH, SEQ_LEN, @K)
+    """
+    # 调用原始文件中的uncertainty_guided_search
+    out = original_uncertainty_guided_search(
+        harness,
+        batch,
+        tokenizer,
+        k=k,
+        keep_n=keep_n,
+        out_length=out_length,
+        **kwargs,
+    )
+    out_logits = []
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    
+    for b in out:
+        _batch = []
+        for beam in b[:keep_n]:
+            # 使用相同的处理逻辑
+            tgt_seq = beam[1][1:]  # tgt，移除start token
+            # 确保长度不超过期望长度
+            if len(tgt_seq) > out_length:
+                tgt_seq = tgt_seq[:out_length]
+            _batch.append(tgt_seq)
+        
+        # 确保有足够的beams
+        while len(_batch) < keep_n:
+            _batch.append(np.full(out_length, pad_token_id, dtype=np.int64))
+
+        # 确保所有序列长度一致
+        for i in range(len(_batch)):
+            if len(_batch[i]) < out_length:
+                # Pad到指定长度
+                padding_length = out_length - len(_batch[i])
+                _batch[i] = np.concatenate([_batch[i], np.full(padding_length, pad_token_id, dtype=np.int64)])
+            elif len(_batch[i]) > out_length:
+                # 截断到指定长度
+                _batch[i] = _batch[i][:out_length]
+
+        out_logits.append(np.vstack(_batch))
+
+    out_logits = torch.tensor(np.array(out_logits), dtype=torch.int64).permute(
+        (0, 2, 1)
+    )
+
+    return out_logits
+
+
 @torch.inference_mode()
 def run_evaluation(model, epoch, run_name, num_samples=50):
     basepath = pathlib.Path(os.environ.get("WRKDIR", "."))
@@ -207,29 +356,34 @@ def run_evaluation(model, epoch, run_name, num_samples=50):
         shuffle=False
     )
 
-    # 测试温度重排序beam search的效果（高效版本）
+    # 测试简化的ATS-guided beam search方法
     samplers = {
         # 🔥 标准HuggingFace beam search（基准）
         'hf_standard': partial(beam_search_hf, beams=5, k=5, early_stopping=True, max_length=128),
         
-        # 🔥 温度重排序beam search - 不同alpha值（高效版本）
-        'temp_rerank_α0.0': partial(temperature_rerank_beam_search, beams=5, k=5, alpha=0.0, max_length=128),
-        'temp_rerank_α0.3': partial(temperature_rerank_beam_search, beams=5, k=5, alpha=0.3, max_length=128),
-        'temp_rerank_α0.5': partial(temperature_rerank_beam_search, beams=5, k=5, alpha=0.5, max_length=128),
-        'temp_rerank_α0.8': partial(temperature_rerank_beam_search, beams=5, k=5, alpha=0.8, max_length=128),
-        'temp_rerank_α1.0': partial(temperature_rerank_beam_search, beams=5, k=5, alpha=1.0, max_length=128),
+        # 🔥 新的ATS-guided方法（简化版）
+        # 'ats_uncertainty_th0.4': partial(ats_uncertainty_guided_search_wrapper, tokenizer=tokenizer, k=64, keep_n=5, out_length=128, threshold=0.4),
+        # 'ats_uncertainty_th0.8': partial(ats_uncertainty_guided_search_wrapper, tokenizer=tokenizer, k=64, keep_n=5, out_length=128, threshold=0.8),
+        # 'ats_uncertainty_th1.2': partial(ats_uncertainty_guided_search_wrapper, tokenizer=tokenizer, k=64, keep_n=5, out_length=128, threshold=1.2),
+        # 'ats_uncertainty_th2.0': partial(ats_uncertainty_guided_search_wrapper, tokenizer=tokenizer, k=64, keep_n=5, out_length=128, threshold=2.0),
         
-        # 🔥 对比：其他搜索方法
-        'entropy_search': partial(entropy_beam_search, tokenizer=tokenizer, steps=64, keep_n=5, out_length=128),
+        # 🔥 对比：原有方法
+        # 'entropy_search': partial(entropy_beam_search, tokenizer=tokenizer, steps=64, keep_n=5, out_length=128),
         'uncertainty_search': partial(uncertainty_guided_search_wrapper, tokenizer=tokenizer, k=64, keep_n=5, out_length=128),
+        
+        # 🔥 测试：原始文件中的uncertainty_guided_search
+        'original_uncertainty_th0.4': partial(original_uncertainty_guided_search_wrapper, tokenizer=tokenizer, k=64, keep_n=5, out_length=128, threshold=0.4),
+        
+        # 🔥 保留一个温度重排序方法作为对比
+        'temp_rerank_α0.5': partial(temperature_rerank_beam_search, beams=5, k=5, alpha=0.5, max_length=128),
     }
 
-    print(f"\n{'='*60}")
-    print(f"🔬 运行评估: {run_name} (epoch {epoch})")
-    print(f"📊 数据集: {samples_to_use}/{total_samples} 样本")
-    print(f"📦 批次大小: {batch_size}")
-    print(f"🎯 模型训练模式: {model.train_mode}")
-    print(f"{'='*60}")
+    # print(f"\n{'='*60}")
+    # print(f"🔬 运行评估: {run_name} (epoch {epoch})")
+    # print(f"📊 数据集: {samples_to_use}/{total_samples} 样本")
+    # print(f"📦 批次大小: {batch_size}")
+    # print(f"🎯 模型训练模式: {model.train_mode}")
+    # print(f"{'='*60}")
 
     for name, sampler in samplers.items():
         print(f"\n📋 方法: {name}")
@@ -246,7 +400,7 @@ def run_evaluation(model, epoch, run_name, num_samples=50):
         ) as handle:
             pickle.dump(stats, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-    print(f"\n✅ 评估完成！结果保存到 eval_scores/ (文件名包含样本数量)")
+    # print(f"\n✅ 评估完成！结果保存到 eval_scores/ (文件名包含样本数量)")
 
 
 def main():

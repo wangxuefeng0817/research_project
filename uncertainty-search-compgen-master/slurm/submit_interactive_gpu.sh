@@ -5,10 +5,10 @@
 # +
 #!/bin/bash
 
-#SBATCH --partition=gpu-h200-141g-short
+# SBATCH --partition=gpu-h200-141g-short
 #SBATCH --gres=gpu:h200:1
 #SBATCH --mem=140GB                      # 请求 200GB 内存
-#SBATCH --time=24:00:00                  # 最大运行时间 24 小时
+#SBATCH --time=16:00:00                  # 最大运行时间 24 小时
 #SBATCH --cpus-per-gpu=8                # 每个 GPU 分配 8 个 CPU 核心
 #SBATCH --output=logs/output_%j.log     # 保存标准输出日志
 #SBATCH --error=logs/error_%j.log       # 保存标准错误日志
