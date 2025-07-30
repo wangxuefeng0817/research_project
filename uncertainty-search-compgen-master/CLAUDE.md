@@ -40,7 +40,17 @@ pip install -r requirements.txt
 
 # Alternative: Install as package
 pip install -e .
+
+# Install from root directory (use absolute paths in train_lm.py)
+cd uncertainty-search-compgen-master
+pip install -e .
 ```
+
+### Python Path Configuration
+The codebase requires specific Python path configuration:
+- Main training scripts expect to run from the `uncertainty-search-compgen-master` directory
+- Absolute paths are hardcoded in `train_lm.py:5` and `train_lm.py:11` for project root
+- Package imports use relative imports with `__package__ = "uncertainty_search_compgen"`
 
 ### Training Commands
 ```bash
@@ -64,16 +74,48 @@ python analyze_existing_data.py
 
 # Generate correlation reports
 python generate_correlation_report.py
+
+# Temperature scaling diagnostics
+python diagnose_ats_vs_entropy.py
+
+# Test different temperature scaling approaches
+python test_temperature_scaling_effect.py
+
+# Test improved ATS methods
+python test_improved_ats_methods.py
+```
+
+### Jupyter Notebooks
+```bash
+# Interactive inference and analysis
+jupyter notebook notebook/inference.ipynb
+
+# Or run inference directly
+python notebook/inference.py
 ```
 
 ### SLURM Integration
 For GPU cluster usage:
 ```bash
-# Submit GPU job
+# Submit GPU job (launches Jupyter notebook)
 sbatch slurm/submit_interactive_gpu.sh
 
 # Submit CPU job  
 sbatch slurm/submit_interactive_cpu.sh
+
+# Check job status
+squeue -u $USER
+
+# View logs
+tail -f logs/output_<job_id>.log
+tail -f logs/error_<job_id>.log
+```
+
+### Data Setup
+```bash
+# Download required datasets (from README)
+wget https://sspilsbury-data.s3.eu-north-1.amazonaws.com/text.zip
+unzip text.zip
 ```
 
 ## Key Configuration
@@ -82,6 +124,8 @@ sbatch slurm/submit_interactive_cpu.sh
 - Default base model: `Salesforce/codet5p-220m`
 - Tokenizer: CodeT5+ tokenizer with right padding
 - Cache directory: `/tmp/hf` for HuggingFace models
+- ATS head architecture: 2-layer Transformer + 2-layer MLP with GELU and LayerNorm
+- GPU memory optimization: Supports H200 GPUs with 141GB memory allocation
 
 ### Training Parameters
 - Learning rates: Base model 0.1x, ATS head 1.0x
@@ -126,11 +170,20 @@ sbatch slurm/submit_interactive_cpu.sh
 - Implements custom loss functions with uncertainty regularization
 - Heavy use of transformer architectures from HuggingFace
 - GPU-optimized with CUDA support throughout
+- Absolute path dependencies in training scripts (requires specific working directory)
 
 ### Testing Strategy
 - Multiple test scripts for different ATS configurations
 - Quantitative evaluation with correlation metrics
 - Visualization tools for analysis and debugging
+- Text2SQL tests available in `text/semparse/text2sql-data/systems/sequence-to-sequence/seq2seq/test/`
+
+### File Structure Notes
+- Main package: `uncertainty_search_compgen/`
+- Training logs: `logs/`, `logs_full_data_stable/` with TensorBoard events
+- Results and analysis: `figures/`, evaluation JSON files
+- Model checkpoints: Stored with descriptive names indicating layer and stage
+- SLURM integration: Scripts in `slurm/` directory for cluster deployment
 
 ## Standard Workflow
 1. First think through the problem, read the codebase for relevant files, and write a plan to tasks/todo. md.
